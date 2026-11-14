@@ -11,7 +11,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Custom markers can be added here
+// Custom markers
 const incidentIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -42,7 +42,6 @@ const MapUpdater = ({ activeCityFilter, incidents, ambulances, hospitals }) => {
   const [centeredOn, setCenteredOn] = useState(null);
 
   useEffect(() => {
-    // Robust resize handling for desktop flex containers
     const resizeObserver = new ResizeObserver(() => {
       map.invalidateSize();
     });
@@ -50,7 +49,6 @@ const MapUpdater = ({ activeCityFilter, incidents, ambulances, hospitals }) => {
     const container = map.getContainer();
     if (container) {
       resizeObserver.observe(container);
-      // Initial invalidation in case it started hidden
       setTimeout(() => map.invalidateSize(), 100);
       setTimeout(() => map.invalidateSize(), 500);
     }
@@ -64,16 +62,19 @@ const MapUpdater = ({ activeCityFilter, incidents, ambulances, hospitals }) => {
   useEffect(() => {
     if (activeCityFilter === centeredOn) return;
 
-    let targetCenter = [20.5937, 78.9629]; // India center
-    let targetZoom = 4.8;
+    let targetCenter = [17.3850, 78.4867]; // Hyderabad default
+    let targetZoom = 11;
     let found = true;
 
-    if (activeCityFilter !== 'All India' && activeCityFilter !== '') {
+    if (activeCityFilter === 'All India') {
+      targetCenter = [20.5937, 78.9629];
+      targetZoom = 4.8;
+    } else if (activeCityFilter && activeCityFilter !== '') {
       found = false;
       const itemWithCity = 
-        hospitals.find(h => h.city === activeCityFilter) ||
-        incidents.find(i => i.city === activeCityFilter) || 
-        ambulances.find(a => a.city === activeCityFilter);
+        (hospitals || []).find(h => h.city === activeCityFilter) ||
+        (incidents || []).find(i => i.city === activeCityFilter) || 
+        (ambulances || []).find(a => a.city === activeCityFilter);
         
       if (itemWithCity) {
         const coords = itemWithCity.location?.coordinates || itemWithCity.currentLocation?.coordinates;
@@ -99,16 +100,13 @@ const MapUpdater = ({ activeCityFilter, incidents, ambulances, hospitals }) => {
 
 const MapComponent = ({ incidents = [], ambulances = [], hospitals = [] }) => {
   const activeCityFilter = useDemoStore(state => state.activeCityFilter);
-  
   const routes = useDemoStore(state => state.routes) || [];
-  const alerts = useDemoStore(state => state.alerts) || [];
-  const roadConditions = useDemoStore(state => state.roadConditions) || [];
   
   return (
     <div className="h-full w-full relative z-0">
       <MapContainer 
-        center={[20.5937, 78.9629]} 
-        zoom={4.8}
+        center={[17.3850, 78.4867]} 
+        zoom={11}
         zoomSnap={0.5}
         zoomDelta={0.5}
         wheelPxPerZoomLevel={120}
@@ -128,11 +126,10 @@ const MapComponent = ({ incidents = [], ambulances = [], hospitals = [] }) => {
         {/* Routes */}
         {routes.map(route => {
           if (route.status === 'ACTIVE' && route.geometry?.coordinates) {
-            // Convert GeoJSON [lng, lat] to Leaflet [lat, lng]
             const positions = route.geometry.coordinates.map(c => [c[1], c[0]]);
             return (
               <Polyline 
-                key={route._id} 
+                key={route._id || Math.random()} 
                 positions={positions} 
                 pathOptions={{ color: '#00f2fe', weight: 4, opacity: 0.7, dashArray: '5, 10' }} 
               />
@@ -141,11 +138,14 @@ const MapComponent = ({ incidents = [], ambulances = [], hospitals = [] }) => {
           return null;
         })}
 
-        {hospitals.map((hospital) => (
-          hospital.location?.coordinates && (
+        {/* Hospitals */}
+        {(hospitals || []).map((hospital) => {
+          const coords = hospital.location?.coordinates;
+          if (!coords || coords.length < 2) return null;
+          return (
             <Marker 
-              key={hospital._id} 
-              position={[hospital.location.coordinates[1], hospital.location.coordinates[0]]}
+              key={hospital._id || hospital.hospitalId || hospital.name} 
+              position={[coords[1], coords[0]]}
               icon={hospitalIcon}
             >
               <Popup className="custom-popup bg-primary-900 border border-primary-700">
@@ -156,19 +156,22 @@ const MapComponent = ({ incidents = [], ambulances = [], hospitals = [] }) => {
                 </div>
               </Popup>
             </Marker>
-          )
-        ))}
+          );
+        })}
 
-        {incidents.map((incident) => (
-          (incident.status !== 'RESOLVED') && incident.location?.coordinates && (
+        {/* Incidents */}
+        {(incidents || []).map((incident) => {
+          const coords = incident.location?.coordinates;
+          if (!coords || coords.length < 2 || incident.status === 'RESOLVED') return null;
+          return (
             <Marker 
-              key={incident._id} 
-              position={[incident.location.coordinates[1], incident.location.coordinates[0]]}
+              key={incident._id || incident.incidentId} 
+              position={[coords[1], coords[0]]}
               icon={incidentIcon}
             >
               <Popup className="custom-popup bg-primary-900 border border-primary-700">
                 <div className="font-sans text-text-main p-1">
-                  <h3 className="font-bold text-[11px] text-emergency uppercase tracking-wider mb-1">{incident.category.replace('_', ' ')}</h3>
+                  <h3 className="font-bold text-[11px] text-emergency uppercase tracking-wider mb-1">{incident.category?.replace(/_/g, ' ') || 'EMERGENCY'}</h3>
                   <p className="text-[10px] text-text-muted mb-2">{incident.description}</p>
                   <div className="mt-2 flex justify-between text-[9px] uppercase font-bold">
                     <span>Severity: <span className="text-emergency">{incident.severity}/10</span></span>
@@ -177,15 +180,17 @@ const MapComponent = ({ incidents = [], ambulances = [], hospitals = [] }) => {
                 </div>
               </Popup>
             </Marker>
-          )
-        ))}
+          );
+        })}
 
-        {ambulances.map((ambulance) => (
-          // Fixed reference to ambulance.location.coordinates
-          ambulance.location?.coordinates && (
+        {/* Ambulances */}
+        {(ambulances || []).map((ambulance) => {
+          const coords = ambulance.location?.coordinates || ambulance.currentLocation?.coordinates;
+          if (!coords || coords.length < 2) return null;
+          return (
             <Marker 
-              key={ambulance._id} 
-              position={[ambulance.location.coordinates[1], ambulance.location.coordinates[0]]}
+              key={ambulance._id || ambulance.ambulanceId} 
+              position={[coords[1], coords[0]]}
               icon={ambulanceIcon}
             >
               <Popup className="custom-popup bg-primary-900 border border-primary-700">
@@ -196,8 +201,8 @@ const MapComponent = ({ incidents = [], ambulances = [], hospitals = [] }) => {
                 </div>
               </Popup>
             </Marker>
-          )
-        ))}
+          );
+        })}
 
       </MapContainer>
     </div>

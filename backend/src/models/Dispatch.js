@@ -9,7 +9,16 @@ const dispatchSchema = new mongoose.Schema({
   eta: { type: Number }, // in minutes
   distance: { type: Number }, // in km
   score: { type: Number },
-  factors: { type: Object }, // To store why this was chosen (distance, capabilities, etc.)
+  factors: { type: Object }, // Store detailed score factors
+  allocationReason: { type: String },
+  strategy: { 
+    type: String, 
+    enum: ['GLOBAL_DYNAMIC_OPTIMIZATION', 'HUNGARIAN_ASSIGNMENT', 'GREEDY_NEAREST', 'MANUAL_OVERRIDE'],
+    default: 'GLOBAL_DYNAMIC_OPTIMIZATION'
+  },
+  alternativeOptions: [{ type: Object }],
+  reallocatedFrom: { type: mongoose.Schema.Types.ObjectId, ref: 'Ambulance' },
+  reallocationReason: { type: String },
   status: { 
     type: String, 
     enum: ['RECOMMENDED', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'TRANSPORTING', 'COMPLETED', 'REJECTED', 'CANCELLED'],
@@ -22,5 +31,6 @@ const dispatchSchema = new mongoose.Schema({
 
 dispatchSchema.index({ incident: 1 });
 dispatchSchema.index({ ambulance: 1 });
+dispatchSchema.index({ status: 1 });
 
 module.exports = mongoose.model('Dispatch', dispatchSchema);

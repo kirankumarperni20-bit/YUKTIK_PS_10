@@ -64,8 +64,22 @@ const IncidentsList = () => {
     }
   }, [globalSelectedId, allIncidents]);
 
+  const matchesCity = (i) => {
+    if (!activeCityFilter || activeCityFilter === 'All India') return true;
+    if (i.city === activeCityFilter) return true;
+    if (activeCityFilter === 'Hyderabad') {
+      if (i.city === 'Telangana' || i.city === 'Secunderabad' || i.city === 'India') return true;
+      if (i.address && /hyderabad|secunderabad|telangana|gachibowli|madhapur|jubilee|banjara|kukatpally/i.test(i.address)) return true;
+    }
+    if (activeCityFilter === 'Telangana') {
+      if (i.city === 'Hyderabad' || i.state === 'Telangana' || i.city === 'India') return true;
+      if (i.address && /telangana|hyderabad/i.test(i.address)) return true;
+    }
+    return false;
+  };
+
   const filteredIncidents = allIncidents.filter(i => {
-    if (activeCityFilter !== 'All India' && i.city !== activeCityFilter) return false;
+    if (!matchesCity(i)) return false;
     if (statusFilter !== 'ALL' && i.status !== statusFilter) return false;
     if (severityFilter === 'CRITICAL' && i.severity < 9) return false;
     if (severityFilter === 'HIGH' && (i.severity < 7 || i.severity >= 9)) return false;

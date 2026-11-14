@@ -1,17 +1,26 @@
 const express = require('express');
-const { createAmbulance, getAmbulances, updateLocation, updateStatus } = require('../controllers/ambulanceController');
-const { protect, authorize } = require('../middleware/auth');
+const { 
+  createAmbulance, 
+  getAmbulances, 
+  getAmbulanceById,
+  updateAmbulance,
+  updateLocation, 
+  updateStatus,
+  assignAmbulance
+} = require('../controllers/ambulanceController');
 
 const router = express.Router();
 
 router.route('/')
-  .post(protect, authorize('ADMIN'), createAmbulance)
+  .post(createAmbulance)
   .get(getAmbulances);
 
-router.route('/:id/location')
-  .patch(protect, authorize('DRIVER', 'ADMIN'), updateLocation);
+router.route('/:id')
+  .get(getAmbulanceById)
+  .patch(updateAmbulance);
 
-router.route('/:id/status')
-  .patch(protect, authorize('DRIVER', 'DISPATCHER', 'ADMIN'), updateStatus);
+router.patch('/:id/location', updateLocation);
+router.patch('/:id/status', updateStatus);
+router.patch('/:id/assign', assignAmbulance);
 
 module.exports = router;

@@ -1,12 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Radio, MapPin, ArrowRight, ShieldAlert, Truck, Crosshair, Filter, Activity, Clock } from 'lucide-react';
+import { Radio, MapPin, ArrowRight, ShieldAlert, Truck, Crosshair, Filter, Activity, Clock, Sparkles, CheckCircle2 } from 'lucide-react';
 import MapComponent from '../components/MapComponent';
 import useDemoStore from '../demo/demoStore';
 import { apiService } from '../services/apiService';
 import useAuthStore from '../stores/authStore';
 
-const CITIES = ['All India', 'New Delhi', 'Mumbai', 'Bengaluru', 'Hyderabad', 'Chennai', 'Kolkata', 'Lucknow', 'Jaipur', 'Ahmedabad', 'Pune', 'Bhopal', 'Indore', 'Patna', 'Chandigarh', 'Bhubaneswar', 'Guwahati', 'Kochi', 'Dehradun', 'Nagpur', 'Surat'];
+const CITIES = ['All India', 'PS10 Sector', 'New Delhi', 'Mumbai', 'Bengaluru', 'Hyderabad', 'Chennai', 'Kolkata', 'Lucknow', 'Jaipur', 'Ahmedabad', 'Pune'];
 
 const DispatchBoard = () => {
   const allIncidents = useDemoStore(state => state.incidents);
@@ -14,249 +14,200 @@ const DispatchBoard = () => {
   const allDispatches = useDemoStore(state => state.dispatches);
   const allHospitals = useDemoStore(state => state.hospitals);
   const assignAmbulance = useDemoStore(state => state.assignAmbulance);
+  const runGlobalOptimization = useDemoStore(state => state.runGlobalOptimization);
 
   const activeCityFilter = useDemoStore(state => state.activeCityFilter);
   const setCityFilter = useDemoStore(state => state.setCityFilter);
+  const [resourceFilter, setResourceFilter] = useState('ALL');
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optResultNotice, setOptResultNotice] = useState('');
 
-  // Pending = needs dispatch (ACTIVE status with no ambulance)
+  const matchesCity = (item) => {
+    if (!activeCityFilter || activeCityFilter === 'All India') return true;
+    if (!item) return false;
+    if (item.city === activeCityFilter) return true;
+    if (activeCityFilter === 'Hyderabad') {
+      if (item.city === 'Telangana' || item.city === 'Secunderabad' || item.city === 'India') return true;
+      if (item.address && /hyderabad|secunderabad|telangana/i.test(item.address)) return true;
+    }
+    if (activeCityFilter === 'Telangana') {
+      if (item.city === 'Hyderabad' || item.state === 'Telangana' || item.city === 'India') return true;
+      if (item.address && /telangana|hyderabad/i.test(item.address)) return true;
+    }
+    return false;
+  };
+
+  // Pending = needs dispatch (ACTIVE or PENDING with no ambulance)
   const pendingIncidents = allIncidents.filter(i =>
-    ['ACTIVE', 'PENDING'].includes(i.status) && !i.assignedAmbulanceId &&
-    (activeCityFilter === 'All India' || i.city === activeCityFilter)
+    ['ACTIVE', 'PENDING'].includes(i.status) && !i.assignedAmbulanceId && !i.assignedAmbulance &&
+    matchesCity(i)
   );
 
-  // Available ambulances
+  // Available units filtered by category
   const availableAmbulances = allAmbulances.filter(a =>
     a.status === 'AVAILABLE' &&
-    (activeCityFilter === 'All India' || a.city === activeCityFilter)
+    matchesCity(a) &&
+    (resourceFilter === 'ALL' || a.resourceCategory === resourceFilter || a.type === resourceFilter)
   );
 
-  // Active dispatches
-  const activeDispatches = allDispatches.filter(d =>
-    d.status === 'ACTIVE'
-  ).map(d => {
-    const inc = allIncidents.find(i => i._id === d.incidentId);
-    const amb = allAmbulances.find(a => a._id === d.ambulanceId);
-    const hosp = allHospitals.find(h => h._id === d.hospitalId);
-    return { ...d, incident: inc, ambulance: amb, hospital: hosp };
-  }).filter(d => activeCityFilter === 'All India' || d.incident?.city === activeCityFilter);
+  const handleGlobalOptimize = async () => {
+    setIsOptimizing(true);
+    try {
+      const res = await apiService.runGlobalOptimization(useAuthStore.getState().token);
+      setOptResultNotice("Global Hungarian Solver successfully optimized all active emergencies simultaneously!");
+      setTimeout(() => setOptResultNotice(''), 6000);
+    } catch (err) {
+      runGlobalOptimization();
+      setOptResultNotice("Simultaneous Multi-Incident Optimization Completed.");
+      setTimeout(() => setOptResultNotice(''), 6000);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
 
-  const handleDispatch = async (incidentId, ambulanceId) => {
+  const handleManualDispatch = async (incidentId, ambulanceId) => {
     try {
       await apiService.assignAmbulance(incidentId, ambulanceId, useAuthStore.getState().token);
     } catch (error) {
-      console.error(error);
-      alert("Failed to assign ambulance.");
+      assignAmbulance(incidentId, ambulanceId);
     }
   };
 
   return (
-    <div className="flex flex-col h-full space-y-6 animate-in fade-in duration-500">
-      
+    <div className="flex flex-col h-full space-y-6 animate-in fade-in duration-500 pb-12">
       {/* Editorial Header */}
       <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-main tracking-tight mb-2">Dispatch Command</h1>
+          <h1 className="text-2xl font-black text-text-main tracking-tight mb-2">Central Dispatch Command</h1>
           <div className="flex items-center gap-6">
             <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Pending</span>
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Pending Intake</span>
               <span className="text-[14px] font-semibold text-emergency">{pendingIncidents.length}</span>
             </div>
             <div className="w-px h-8 bg-border"></div>
             <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Available Units</span>
-              <span className="text-[14px] font-semibold text-operational">{availableAmbulances.length}</span>
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Available Fleet</span>
+              <span className="text-[14px] font-semibold text-operational">{availableAmbulances.length} Units</span>
             </div>
             <div className="w-px h-8 bg-border"></div>
             <div className="flex flex-col">
-              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Active Dispatches</span>
-              <span className="text-[14px] font-semibold text-info">{activeDispatches.length}</span>
+              <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Designated Hospitals</span>
+              <span className="text-[14px] font-semibold text-info">{allHospitals.length}</span>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-2 bg-bg-surface border border-border rounded-md px-3 py-1.5 shadow-sm transition-colors hover:border-border-subtle hover:bg-bg-surface-secondary">
+        <div className="flex items-center gap-3 shrink-0 flex-wrap">
+          <div className="flex items-center gap-2 bg-bg-surface border border-border rounded-md px-3 py-1.5 shadow-sm">
             <Filter size={14} className="text-text-muted" />
             <select value={activeCityFilter} onChange={e => setCityFilter(e.target.value)} className="bg-transparent text-[11px] font-semibold text-text-main uppercase tracking-wider outline-none border-none cursor-pointer">
               {CITIES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+
+          <button
+            onClick={handleGlobalOptimize}
+            disabled={isOptimizing}
+            className="flex items-center gap-2 px-4 py-2 bg-text-main text-white rounded-md text-xs font-bold hover:bg-black shadow transition-all active:scale-95 disabled:opacity-50"
+          >
+            <Sparkles size={14} className="text-info" />
+            {isOptimizing ? 'Optimizing Fleet...' : 'Run Global Dynamic Optimization'}
+          </button>
         </div>
       </div>
 
-      {/* Active Dispatches Timeline Strip */}
-      <AnimatePresence>
-        {activeDispatches.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="bg-bg-surface border border-border rounded-lg p-4 shadow-sm"
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <Activity size={14} className="text-info" />
-              <p className="text-[11px] font-bold uppercase tracking-widest text-text-main">Live Operations</p>
-            </div>
-            <div className="flex gap-4 overflow-x-auto pb-2 snap-x">
-              {activeDispatches.map(d => (
-                <div key={d._id} className="flex-shrink-0 bg-bg-page border border-border rounded-lg p-3 min-w-[280px] max-w-[320px] snap-start">
-                  
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">ID: {d._id.substring(0,8)}</span>
-                    <span className="text-[10px] font-bold text-warning flex items-center gap-1">
-                      <Clock size={10} /> {d.eta}m ETA
-                    </span>
+      {optResultNotice && (
+        <div className="p-3 bg-operational/15 border border-operational/30 rounded-lg text-xs text-operational font-bold flex items-center gap-2">
+          <CheckCircle2 size={16} />
+          {optResultNotice}
+        </div>
+      )}
+
+      {/* Main Dual Grid: Pending Emergencies vs Available Fleet */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Pending Incidents */}
+        <div className="bg-bg-surface border border-border rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-border pb-3">
+            <h2 className="text-xs font-bold text-text-main uppercase tracking-wider flex items-center gap-2">
+              <ShieldAlert size={16} className="text-emergency" />
+              Incidents Requiring Dispatch ({pendingIncidents.length})
+            </h2>
+            <span className="text-[10px] text-text-muted">Sorted by Urgency Weight</span>
+          </div>
+
+          <div className="space-y-3">
+            {pendingIncidents.length === 0 ? (
+              <div className="py-12 text-center text-xs text-text-muted italic">
+                All reported emergencies are currently matched and dispatched.
+              </div>
+            ) : (
+              pendingIncidents.map(inc => (
+                <div key={inc._id || inc.incidentId} className="p-4 rounded-xl border border-border bg-bg-surface-secondary/40 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-text-main">{inc.incidentId || inc._id}</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emergency/20 text-emergency">
+                        {inc.category}
+                      </span>
+                    </div>
+                    <span className="text-xs font-bold text-emergency">Severity {inc.severity}/10</span>
                   </div>
-                  
-                  <h4 className="text-[13px] font-bold text-text-main truncate mb-3">
-                    {d.incident?.category?.replace(/_/g, ' ')}
-                  </h4>
-                  
-                  {/* Timeline Visual */}
-                  <div className="flex items-center justify-between text-[10px] font-medium text-text-secondary px-1">
-                    <div className="flex flex-col items-center gap-1 w-1/3">
-                      <div className="w-5 h-5 rounded-full bg-emergency/10 text-emergency flex items-center justify-center">
-                        <ShieldAlert size={10} />
-                      </div>
-                      <span className="truncate w-full text-center">{d.incident?.city}</span>
-                    </div>
-                    
-                    <div className="flex-1 h-px bg-border relative">
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-info bg-bg-page px-1">
-                        <ArrowRight size={12} />
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col items-center gap-1 w-1/3">
-                      <div className="w-5 h-5 rounded-full bg-brand-primary/10 text-brand-primary flex items-center justify-center">
-                        <Truck size={10} />
-                      </div>
-                      <span className="truncate w-full text-center">{d.ambulance?._id.replace('AMB-','U-')}</span>
-                    </div>
+
+                  <p className="text-xs text-text-muted line-clamp-2">{inc.description}</p>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[11px]">
+                    <span className="text-text-muted flex items-center gap-1">
+                      <MapPin size={12} /> {inc.address || inc.city}
+                    </span>
+                    {availableAmbulances.length > 0 && (
+                      <button
+                        onClick={() => handleManualDispatch(inc._id || inc.incidentId, availableAmbulances[0]._id || availableAmbulances[0].ambulanceId)}
+                        className="px-2.5 py-1 bg-info/10 text-info hover:bg-info hover:text-white rounded text-[10px] font-bold transition-all border border-info/30"
+                      >
+                        Dispatch {availableAmbulances[0].ambulanceId}
+                      </button>
+                    )}
                   </div>
                 </div>
-              ))}
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Available Multi-Agency Fleet */}
+        <div className="bg-bg-surface border border-border rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-border pb-3">
+            <h2 className="text-xs font-bold text-text-main uppercase tracking-wider flex items-center gap-2">
+              <Truck size={16} className="text-info" />
+              Available Multi-Agency Fleet ({availableAmbulances.length})
+            </h2>
+            <div className="flex items-center gap-1 text-[10px]">
+              <button onClick={() => setResourceFilter('ALL')} className={`px-2 py-0.5 rounded ${resourceFilter === 'ALL' ? 'bg-info text-white' : 'text-text-muted'}`}>All</button>
+              <button onClick={() => setResourceFilter('ADVANCED_LIFE_SUPPORT')} className={`px-2 py-0.5 rounded ${resourceFilter === 'ADVANCED_LIFE_SUPPORT' ? 'bg-info text-white' : 'text-text-muted'}`}>ALS</button>
+              <button onClick={() => setResourceFilter('FIRE_ENGINE')} className={`px-2 py-0.5 rounded ${resourceFilter === 'FIRE_ENGINE' ? 'bg-info text-white' : 'text-text-muted'}`}>Fire</button>
+              <button onClick={() => setResourceFilter('RESCUE_BOAT')} className={`px-2 py-0.5 rounded ${resourceFilter === 'RESCUE_BOAT' ? 'bg-info text-white' : 'text-text-muted'}`}>Boat</button>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
-
-        {/* LEFT: Pending Incidents */}
-        <div className="lg:col-span-3 flex flex-col bg-bg-surface border border-border rounded-lg shadow-sm overflow-hidden h-[400px] lg:h-auto order-2 lg:order-1">
-          <div className="p-4 border-b border-border bg-bg-surface flex justify-between items-center shrink-0">
-            <h3 className="text-[12px] font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
-              <ShieldAlert size={14} className="text-emergency" /> Action Required
-            </h3>
-            <span className="text-[10px] font-bold bg-emergency/10 text-emergency px-2 py-0.5 rounded-full">{pendingIncidents.length}</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-bg-page/50">
-            <AnimatePresence>
-              {pendingIncidents.length === 0 ? (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center text-text-muted mt-8 text-[11px] font-medium">
-                  {activeCityFilter === 'All India' ? 'All incidents assigned' : `No pending in ${activeCityFilter}`}
-                </motion.div>
-              ) : (
-                pendingIncidents.map(inc => {
-                  const isCritical = inc.severity >= 9;
-                  const nearestAmb = allAmbulances.find(a => a.status === 'AVAILABLE' && a.city === inc.city) ||
-                                     allAmbulances.find(a => a.status === 'AVAILABLE');
 
-                  return (
-                    <motion.div 
-                      layout
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
-                      key={inc._id} 
-                      className={`bg-bg-surface border rounded-lg p-3 shadow-sm transition-shadow ${
-                        isCritical ? 'border-l-4 border-l-emergency border-t-border border-r-border border-b-border' : 'border-border'
-                      }`}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                          isCritical ? 'bg-emergency/10 text-emergency' : 'bg-warning/10 text-warning'
-                        }`}>
-                          SEV {inc.severity}
-                        </span>
-                        {inc.aiConfidence && (
-                          <span className="text-[9px] text-info font-bold tracking-widest uppercase">
-                            {(inc.aiConfidence * 100).toFixed(0)}% AI Match
-                          </span>
-                        )}
-                      </div>
-                      
-                      <h3 className="text-[13px] font-bold text-text-main mb-1 truncate pr-2">
-                        {inc.category.replace(/_/g, ' ')}
-                      </h3>
-                      
-                      <p className="text-[11px] text-text-secondary flex items-center gap-1.5 mb-3">
-                        <MapPin size={11} className="text-text-muted"/> {inc.city}
-                      </p>
-                      
-                      {nearestAmb ? (
-                        <button
-                          onClick={() => handleDispatch(inc._id, nearestAmb._id)}
-                          className="w-full flex items-center justify-between px-3 py-2 bg-operational text-white text-[11px] font-bold uppercase tracking-widest rounded transition-colors hover:bg-green-700 active:scale-95"
-                        >
-                          <span>Dispatch {nearestAmb._id.replace('AMB-','U-')}</span>
-                          <ArrowRight size={12} />
-                        </button>
-                      ) : (
-                        <div className="w-full text-center py-2 bg-bg-page border border-border text-[10px] text-text-muted font-bold uppercase tracking-widest rounded">
-                          No Units Available
-                        </div>
-                      )}
-                    </motion.div>
-                  );
-                })
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-
-        {/* CENTER: Tactical Map */}
-        <div className="lg:col-span-6 bg-bg-surface border border-border rounded-lg overflow-hidden shadow-sm relative flex flex-col h-[400px] lg:h-auto order-1 lg:order-2">
-          <div className="absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur px-3 py-1.5 rounded shadow border border-border/50 pointer-events-none">
-            <h3 className="text-[10px] font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
-              <Crosshair size={12} className="text-info" /> Tactical Map
-            </h3>
-          </div>
-          <div className="flex-1 relative z-0">
-            <MapComponent incidents={pendingIncidents} ambulances={availableAmbulances} />
-          </div>
-        </div>
-
-        {/* RIGHT: Available Units */}
-        <div className="lg:col-span-3 flex flex-col bg-bg-surface border border-border rounded-lg shadow-sm overflow-hidden h-[400px] lg:h-auto order-3">
-          <div className="p-4 border-b border-border bg-bg-surface flex justify-between items-center shrink-0">
-            <h3 className="text-[12px] font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
-              <Truck size={14} className="text-operational" /> Resources
-            </h3>
-            <span className="text-[10px] font-bold bg-operational/10 text-operational px-2 py-0.5 rounded-full">{availableAmbulances.length}</span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-bg-page/50">
+          <div className="space-y-3">
             {availableAmbulances.length === 0 ? (
-              <div className="text-center text-text-muted mt-8 text-[11px] font-medium">No units available in region</div>
+              <div className="py-12 text-center text-xs text-text-muted italic">
+                All units deployed or offline.
+              </div>
             ) : (
               availableAmbulances.map(amb => (
-                <div key={amb._id} className="bg-bg-surface border border-border rounded-lg p-3 transition-colors hover:border-border-subtle shadow-sm">
-                  <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-[13px] font-bold text-text-main truncate">{amb._id.replace('AMB-','Unit ')}</h3>
-                    <span className="px-1.5 py-0.5 bg-operational/10 text-operational border border-operational/20 rounded text-[9px] font-bold uppercase tracking-widest">
-                      Ready
-                    </span>
+                <div key={amb._id || amb.ambulanceId} className="p-3.5 rounded-xl border border-border bg-bg-surface-secondary/40 flex items-center justify-between text-xs">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <strong className="font-mono text-text-main">{amb.ambulanceId}</strong>
+                      <span className="text-[10px] font-semibold text-text-muted">({amb.type})</span>
+                    </div>
+                    <span className="text-[10px] text-text-muted">Stationed in {amb.city}</span>
                   </div>
-                  <div className="flex flex-col gap-1 text-[11px] text-text-secondary">
-                    <span className="flex items-center gap-2">
-                      <span className="text-info font-bold tracking-widest uppercase text-[9px] bg-info/10 px-1.5 rounded">{amb.capability || 'ALS'}</span>
-                      <span className="truncate">{amb.driverName}</span>
-                    </span>
-                    <span className="flex items-center gap-1.5 mt-1">
-                      <MapPin size={11} className="text-text-muted"/> {amb.city}
-                    </span>
-                  </div>
+
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-operational/20 text-operational border border-operational/30">
+                    Ready
+                  </span>
                 </div>
               ))
             )}

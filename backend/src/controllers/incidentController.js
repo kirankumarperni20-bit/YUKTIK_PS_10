@@ -1,11 +1,24 @@
 const Incident = require('../models/Incident');
+const crypto = require('crypto');
+const axios = require('axios');
+const reallocationEngine = require('../services/reallocationEngine');
 
-// @desc    Create new incident
+// @desc    Create new incident with AI classification and resource prediction
 // @route   POST /api/incidents
-// @access  Private
+// @access  Public / Private
 const createIncident = async (req, res, next) => {
   try {
-    const { category, description, latitude, longitude, address, affectedPeople, isMedicalEmergency } = req.body;
+    const { 
+      category, 
+      description, 
+      latitude, 
+      longitude, 
+      address, 
+      affectedPeople, 
+      isMedicalEmergency, 
+      callerPhone, 
+      city 
+    } = req.body;
     
     // Process media files if uploaded
     const mediaPaths = [];
@@ -15,61 +28,121 @@ const createIncident = async (req, res, next) => {
       });
     }
 
-    const incidentId = 'INC-NEW-' + Math.floor(100000 + Math.random() * 900000);
+    const trackingToken = crypto.randomBytes(8).toString('hex');
+    const incidentId = 'INC-' + Math.floor(100000 + Math.random() * 900000);
+    const numCasualties = affectedPeople ? parseInt(affectedPeople) : 1;
+
+    // Intelligent city and state resolution from address/coordinates
+    let incidentCity = city;
+    let incidentState = req.body.state || 'Telangana';
+
+    if (!incidentCity && address) {
+      const lower = address.toLowerCase();
+      if (lower.includes('hyderabad') || lower.includes('secunderabad') || lower.includes('cyberabad') || lower.includes('telangana')) {
+        incidentCity = 'Hyderabad';
+        incidentState = 'Telangana';
+      } else if (lower.includes('bengaluru') || lower.includes('bangalore')) {
+        incidentCity = 'Bengaluru';
+        incidentState = 'Karnataka';
+      } else if (lower.includes('delhi')) {
+        incidentCity = 'New Delhi';
+        incidentState = 'Delhi';
+      } else if (lower.includes('mumbai')) {
+        incidentCity = 'Mumbai';
+        incidentState = 'Maharashtra';
+      } else if (lower.includes('chennai')) {
+        incidentCity = 'Chennai';
+        incidentState = 'Tamil Nadu';
+      } else if (lower.includes('kolkata')) {
+        incidentCity = 'Kolkata';
+        incidentState = 'West Bengal';
+      } else {
+        const tokens = address.split(',').map(s => s.trim()).filter(s => s && s.toLowerCase() !== 'india' && !/^\d{5,6}$/.test(s));
+        incidentCity = tokens.length > 0 ? tokens[tokens.length - 1] : 'Hyderabad';
+      }
+    }
+    if (!incidentCity || incidentCity.toLowerCase() === 'india') {
+      incidentCity = 'Hyderabad';
+    }
+
     const incident = await Incident.create({
-      incidentId: incidentId,
-      reportedBy: req.user ? req.user._id : undefined, // allow unauth for demo
-      category,
+      incidentId,
+      trackingToken,
+      reportedBy: req.user ? req.user._id : undefined,
+      category: category || 'ROAD_ACCIDENT',
       description,
+      city: incidentCity,
+      state: incidentState,
       location: {
         type: 'Point',
-        coordinates: [parseFloat(longitude), parseFloat(latitude)] // GeoJSON is [lng, lat]
+        coordinates: [parseFloat(longitude), parseFloat(latitude)]
       },
       address,
       media: mediaPaths,
-      affectedPeople: affectedPeople ? parseInt(affectedPeople) : undefined,
-      isMedicalEmergency: isMedicalEmergency === 'true' || isMedicalEmergency === true
+      callerPhone,
+      affectedPeople: numCasualties,
+      isMedicalEmergency: isMedicalEmergency === 'true' || isMedicalEmergency === true,
+      status: 'PENDING'
     });
 
+    // Invoke AI microservice for classification and resource requirement estimation
     try {
-      const axios = require('axios');
       const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
       const aiRes = await axios.post(`${aiServiceUrl}/api/ai/analyze`, {
         incidentId: incident._id.toString(),
         description: incident.description,
-        category: incident.category
-      });
+        category: incident.category,
+        affectedPeople: numCasualties
+      }, { timeout: 3000 });
       
       if (aiRes.data && aiRes.data.success) {
         const result = aiRes.data.data;
         const AIAnalysis = require('../models/AIAnalysis');
         await AIAnalysis.create({
           incident: incident._id,
-          severityScore: result.recommendedSeverity || incident.severity,
+          severityScore: result.recommendedSeverity || 5,
           confidence: result.confidenceScore || 0.85,
-          recommendedAmbulanceType: result.recommendedAmbulanceType || 'ALS',
+          recommendedAmbulanceType: result.requiredResources?.ambulanceType || 'ADVANCED_LIFE_SUPPORT',
           medicalAssessment: result.reasoning || 'Analysis complete',
           isGemini: result.isGemini !== false
         });
         
-        // Update incident with AI fields
-        incident.severity = result.recommendedSeverity || incident.severity;
-        incident.aiConfidence = result.confidenceScore || 0.85;
-        incident.source = result.isGemini === false ? 'DEMO AI' : 'GEMINI AI';
+        incident.severity = result.recommendedSeverity || 5;
+        incident.severityLevel = result.severityLevel || (incident.severity >= 8 ? 'CRITICAL' : 'HIGH');
+        incident.aiConfidence = result.confidenceScore || 0.88;
+        incident.source = result.isGemini ? 'GEMINI_AI' : 'SCIKIT_ML_MODEL';
+        if (result.requiredResources) {
+          incident.requiredResources = result.requiredResources;
+        }
         await incident.save();
       }
     } catch (aiError) {
-      console.error("AI Analysis failed:", aiError.message);
-      // Fallback to DEMO AI if python server fails completely
-      incident.source = 'DEMO AI';
-      incident.aiConfidence = 0.75;
+      console.warn("AI Service analysis fallback:", aiError.message);
+      // Local rule-based fallback
+      incident.severity = incident.category === 'CARDIAC' ? 10 : (incident.category === 'FIRE' ? 9 : 7);
+      incident.severityLevel = incident.severity >= 9 ? 'CRITICAL' : 'HIGH';
+      incident.source = 'FALLBACK_DISPATCH_RULES';
       await incident.save();
     }
 
-    // Notify connected clients via Socket.IO
-    req.io.emit('incident:created', incident);
+    // Automatically dispatch optimal ambulance and hospital immediately
+    const { autoDispatchIncident } = require('../services/optimizationEngine');
+    await autoDispatchIncident(incident._id, req.io);
 
-    res.status(201).json({ success: true, data: incident });
+    const populatedIncident = await Incident.findById(incident._id)
+      .populate('assignedAmbulance')
+      .populate('assignedHospital');
+
+    if (req.io) {
+      reallocationEngine.setIo(req.io);
+      req.io.emit('incident:created', populatedIncident || incident);
+    }
+
+    res.status(201).json({ 
+      success: true, 
+      data: populatedIncident || incident,
+      trackingUrl: `/track/${incident.trackingToken}`
+    });
   } catch (error) {
     next(error);
   }
@@ -77,14 +150,18 @@ const createIncident = async (req, res, next) => {
 
 // @desc    Get all active incidents (Dispatcher view)
 // @route   GET /api/incidents
-// @access  Private (Dispatcher, Admin)
+// @access  Public / Private
 const getIncidents = async (req, res, next) => {
   try {
     const incidents = await Incident.find({
       status: { $nin: ['RESOLVED', 'CANCELLED'] }
-    }).populate('reportedBy', 'name phone').sort('-createdAt');
+    })
+      .populate('reportedBy', 'name phone')
+      .populate('assignedAmbulance')
+      .populate('assignedHospital')
+      .sort('-createdAt');
     
-    res.json({ success: true, data: incidents });
+    res.json({ success: true, count: incidents.length, data: incidents });
   } catch (error) {
     next(error);
   }
@@ -97,13 +174,68 @@ const getIncidentById = async (req, res, next) => {
   try {
     const incident = await Incident.findById(req.params.id)
       .populate('reportedBy', 'name phone')
-      .populate('assignedAmbulance');
-      
+      .populate('assignedAmbulance')
+      .populate('assignedHospital');
+
     if (!incident) {
       return res.status(404).json({ success: false, message: 'Incident not found' });
     }
-    
+
     res.json({ success: true, data: incident });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Citizen Emergency Live Tracking
+// @route   GET /api/incidents/track/:token
+// @access  Public
+const trackIncident = async (req, res, next) => {
+  try {
+    let incident = await Incident.findOne({ trackingToken: req.params.token })
+      .populate('assignedAmbulance', 'ambulanceId type status speed heading currentLocation driverName driverPhone')
+      .populate('assignedHospital', 'name address location availableIcuBeds');
+
+    if (!incident) {
+      return res.status(404).json({ success: false, message: 'Invalid tracking reference' });
+    }
+
+    // Auto-dispatch optimal ambulance & hospital if pending or unassigned
+    if (!incident.assignedAmbulance || !incident.assignedHospital || incident.status === 'PENDING') {
+      const { autoDispatchIncident } = require('../services/optimizationEngine');
+      await autoDispatchIncident(incident._id, req.io);
+      incident = await Incident.findById(incident._id)
+        .populate('assignedAmbulance', 'ambulanceId type status speed heading currentLocation driverName driverPhone')
+        .populate('assignedHospital', 'name address location availableIcuBeds');
+    }
+
+    res.json({
+      success: true,
+      data: {
+        incidentId: incident.incidentId,
+        category: incident.category,
+        status: incident.status,
+        address: incident.address,
+        location: incident.location,
+        reportedAt: incident.reportedAt,
+        assignedAmbulance: incident.assignedAmbulance,
+        assignedHospital: incident.assignedHospital,
+        explanation: incident.allocationExplanation
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Trigger auto-dispatch for an incident
+// @route   POST /api/incidents/:id/auto-dispatch
+// @access  Public
+const triggerAutoDispatch = async (req, res, next) => {
+  try {
+    const { autoDispatchIncident } = require('../services/optimizationEngine');
+    const updated = await autoDispatchIncident(req.params.id, req.io);
+    res.json({ success: true, data: updated });
   } catch (error) {
     next(error);
   }
@@ -111,72 +243,33 @@ const getIncidentById = async (req, res, next) => {
 
 // @desc    Update incident status
 // @route   PATCH /api/incidents/:id/status
-// @access  Private
+// @access  Private (Dispatcher, Admin, Driver)
 const updateIncidentStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
-    
-    const updateData = { status };
-    if (status === 'RESOLVED') {
-      updateData.resolvedAt = Date.now();
-    }
-
     const incident = await Incident.findByIdAndUpdate(
       req.params.id,
-      updateData,
-      { new: true, runValidators: true }
+      {
+        status,
+        resolvedAt: status === 'RESOLVED' ? Date.now() : undefined
+      },
+      { new: true }
     );
-    
-    if (!incident) {
-      return res.status(404).json({ success: false, message: 'Incident not found' });
+
+    if (req.io) {
+      req.io.emit('incident:statusUpdated', incident);
     }
-    
-    // Broadcast status change
-    req.io.emit('incident:status', incident);
-    
+
     res.json({ success: true, data: incident });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get historical incidents with filtering (Reports view)
-// @route   GET /api/incidents/historical
-// @access  Private
 const getHistoricalIncidents = async (req, res, next) => {
   try {
-    const { year, city, state, severity, category, ambulanceType, outcome, limit } = req.query;
-    
-    let filter = { status: 'RESOLVED' };
-    
-    if (year) {
-      const startDate = new Date(`${year}-01-01T00:00:00.000Z`);
-      const endDate = new Date(`${year}-12-31T23:59:59.999Z`);
-      filter.reportedAt = { $gte: startDate, $lte: endDate };
-    }
-    
-    if (city) filter.city = city;
-    if (state) filter.state = state;
-    
-    if (severity) {
-      if (severity === 'CRITICAL') filter.severity = { $gte: 9 };
-      else if (severity === 'HIGH') filter.severity = { $gte: 7, $lt: 9 };
-      else if (severity === 'MODERATE') filter.severity = { $lt: 7 };
-    }
-    
-    if (category) filter.category = category;
-    if (ambulanceType) filter.ambulanceType = ambulanceType;
-    if (outcome) filter.outcome = outcome;
-
-    let query = Incident.find(filter).sort('-reportedAt');
-    
-    if (limit) {
-      query = query.limit(parseInt(limit));
-    }
-    
-    const incidents = await query;
-    
-    res.json({ success: true, count: incidents.length, data: incidents });
+    const historical = await Incident.find({ status: 'RESOLVED' }).limit(100);
+    res.json({ success: true, data: historical });
   } catch (error) {
     next(error);
   }
@@ -186,6 +279,8 @@ module.exports = {
   createIncident,
   getIncidents,
   getIncidentById,
+  trackIncident,
+  triggerAutoDispatch,
   updateIncidentStatus,
   getHistoricalIncidents
 };

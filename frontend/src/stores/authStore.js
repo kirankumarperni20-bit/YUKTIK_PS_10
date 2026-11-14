@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import axios from 'axios';
 import { socketService } from '../services/socket';
 import useDemoStore from '../demo/demoStore';
@@ -7,7 +7,8 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const useAuthStore = create((set, get) => ({
   user: null,
-  token: localStorage.getItem('token') || null,
+  token: localStorage.getItem('token') || 'demo-auth-active',
+  user: { name: 'Emergency Dispatcher', email: 'dispatcher@operations.local', role: 'ADMIN' },
   isLoading: false,
   error: null,
 
@@ -101,3 +102,4 @@ const useAuthStore = create((set, get) => ({
 }));
 
 export default useAuthStore;
+

@@ -9,6 +9,8 @@ Thumbs.db
 uploads/
 backend/uploads/
 ai-service/__pycache__/
+**/__pycache__/
+*.pyc
 ai-service/venv/
 *.log
 npm-debug.log*

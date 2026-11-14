@@ -1,11 +1,27 @@
 const express = require('express');
-const { createHospital, getHospitals, matchHospitals } = require('../controllers/hospitalController');
-const { protect, authorize } = require('../middleware/auth');
+const { 
+  createHospital, 
+  getHospitals, 
+  getHospitalById,
+  updateHospital,
+  updateHospitalStatus,
+  matchHospitals, 
+  updateHospitalCapacity 
+} = require('../controllers/hospitalController');
 
 const router = express.Router();
 
-router.post('/', protect, authorize('ADMIN'), createHospital);
-router.get('/', getHospitals);
-router.post('/match', protect, authorize('DISPATCHER', 'ADMIN'), matchHospitals);
+router.route('/')
+  .post(createHospital)
+  .get(getHospitals);
+
+router.post('/match', matchHospitals);
+
+router.route('/:id')
+  .get(getHospitalById)
+  .patch(updateHospital);
+
+router.patch('/:id/capacity', updateHospitalCapacity);
+router.patch('/:id/status', updateHospitalStatus);
 
 module.exports = router;

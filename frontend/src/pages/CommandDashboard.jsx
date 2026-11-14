@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Clock, Activity, Truck, MapPin, Search, ShieldAlert, Hospital, TrendingUp, ChevronRight } from 'lucide-react';
+import { AlertTriangle, Clock, Activity, Truck, MapPin, Search, ShieldAlert, Hospital, TrendingUp, ChevronRight, Sparkles } from 'lucide-react';
 import MapComponent from '../components/MapComponent';
 import IncidentDetailsPanel from '../components/IncidentDetailsPanel';
 import useDemoStore from '../demo/demoStore';
 import { isSystemDemoMode } from '../services/apiService';
+import { useNavigate } from 'react-router-dom';
 
-const CITIES = ['All India', 'New Delhi', 'Mumbai', 'Bengaluru', 'Hyderabad', 'Chennai', 'Kolkata', 'Lucknow', 'Jaipur', 'Ahmedabad', 'Pune'];
+const CITIES = ['All India', 'PS10 Sector', 'New Delhi', 'Mumbai', 'Bengaluru', 'Hyderabad', 'Chennai', 'Kolkata', 'Lucknow', 'Jaipur', 'Ahmedabad', 'Pune'];
 
 const KpiBlock = ({ label, value, color, sub, trend }) => (
   <motion.div 
@@ -30,8 +31,6 @@ const KpiBlock = ({ label, value, color, sub, trend }) => (
   </motion.div>
 );
 
-import { useNavigate } from 'react-router-dom';
-
 const CommandDashboard = () => {
   const navigate = useNavigate();
   const incidents = useDemoStore(state => state.incidents);
@@ -52,30 +51,42 @@ const CommandDashboard = () => {
     }
   }, [globalSelectedId, incidents]);
 
-  const filteredInc = activeCityFilter === 'All India' ? incidents : incidents.filter(i => i.city === activeCityFilter);
-  const filteredAmb = activeCityFilter === 'All India' ? ambulances : ambulances.filter(a => a.city === activeCityFilter);
-  const filteredHosp = activeCityFilter === 'All India' ? hospitals : hospitals.filter(h => h.city === activeCityFilter);
+  const matchesCity = (item) => {
+    if (!activeCityFilter || activeCityFilter === 'All India') return true;
+    if (!item) return false;
+    if (item.city === activeCityFilter) return true;
+    if (activeCityFilter === 'Hyderabad') {
+      if (item.city === 'Telangana' || item.city === 'Secunderabad' || item.city === 'India') return true;
+      if (item.address && /hyderabad|secunderabad|telangana|gachibowli|madhapur|jubilee|banjara|kukatpally/i.test(item.address)) return true;
+    }
+    if (activeCityFilter === 'Telangana') {
+      if (item.city === 'Hyderabad' || item.state === 'Telangana' || item.city === 'India') return true;
+      if (item.address && /telangana|hyderabad/i.test(item.address)) return true;
+    }
+    return false;
+  };
+
+  const filteredInc = incidents.filter(matchesCity);
+  const filteredAmb = ambulances.filter(matchesCity);
+  const filteredHosp = hospitals.filter(matchesCity);
 
   const activeIncidents = filteredInc.filter(i => !['RESOLVED', 'CANCELLED'].includes(i.status));
-  const criticalIncidents = filteredInc.filter(i => i.severity >= 9 && !['RESOLVED', 'CANCELLED'].includes(i.status));
+  const criticalIncidents = filteredInc.filter(i => i.severity >= 8 && !['RESOLVED', 'CANCELLED'].includes(i.status));
   const availableAmb = filteredAmb.filter(a => a.status === 'AVAILABLE');
   const enRouteAmb = filteredAmb.filter(a => a.status === 'EN_ROUTE');
-  const activeAlerts = alerts.filter(a => activeCityFilter === 'All India' || a.city === activeCityFilter);
-  const activeDispatches = dispatches.filter(d => d.status === 'ACTIVE');
 
   return (
     <>
-      <div className="flex flex-col h-full space-y-6 animate-in fade-in duration-500">
-        
+      <div className="flex flex-col h-full space-y-6 animate-in fade-in duration-500 pb-12">
         {/* Editorial Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-text-main tracking-tight mb-1">Operations Overview</h1>
             <p className="text-[13px] text-text-secondary max-w-xl leading-relaxed">
-              Real-time dispatch control and fleet management for {activeCityFilter}. Monitoring {activeIncidents.length} active emergency situations across the network.
+              Real-time multi-agency emergency coordination for {activeCityFilter}. Monitoring {activeIncidents.length} active emergency situations across the network.
             </p>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3 shrink-0 flex-wrap">
             <div className="flex items-center gap-2 bg-bg-surface border border-border rounded-md px-3 py-1.5 shadow-sm">
               <Search size={14} className="text-text-muted" />
               <select
@@ -87,6 +98,12 @@ const CommandDashboard = () => {
               </select>
             </div>
             <button 
+              onClick={() => navigate('/dashboard/ps10')}
+              className="flex items-center gap-2 px-4 py-2 bg-info text-white rounded-md text-[12px] font-bold transition-all hover:bg-info/90 shadow-sm active:scale-95"
+            >
+              <Sparkles size={14} /> PS10 Simulator
+            </button>
+            <button 
               onClick={() => navigate('/report')}
               className="flex items-center gap-2 px-4 py-2 bg-text-main text-white rounded-md text-[12px] font-bold transition-all hover:bg-black shadow-sm active:scale-95"
             >
@@ -97,22 +114,20 @@ const CommandDashboard = () => {
 
         {/* Inline KPI Strip */}
         <div className="bg-bg-surface border border-border rounded-lg p-4 flex flex-wrap shadow-sm">
-          <KpiBlock label="Active Incidents" value={activeIncidents.length} color="text-warning" trend={activeIncidents.length > 50 ? '↑ High' : 'Stable'} />
+          <KpiBlock label="Active Incidents" value={activeIncidents.length} color="text-warning" trend={activeIncidents.length > 20 ? '↑ Surge' : 'Stable'} />
           <KpiBlock label="Critical Priority" value={criticalIncidents.length} color="text-emergency" />
           <KpiBlock label="Fleet Available" value={availableAmb.length} color="text-operational" sub={`of ${filteredAmb.length} total units`} />
           <KpiBlock label="Units En Route" value={enRouteAmb.length} color="text-brand-primary" />
           <KpiBlock label="Network Hospitals" value={filteredHosp.length} color="text-text-main" />
-          <KpiBlock label="Avg Response" value="8:24" color="text-text-main" sub="minutes" />
+          <KpiBlock label="Avg Response" value="6:24" color="text-text-main" sub="minutes" />
         </div>
 
         {/* Main Grid: Asymmetrical Layout */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
-          
           {/* Left Column: Context & Stats */}
           <div className="lg:col-span-3 flex flex-col gap-6 overflow-y-auto pr-2 pb-4 scrollbar-thin">
-            
             <div className="space-y-4">
-              <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-widest border-b border-border pb-2">Fleet Disposition</h3>
+              <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-widest border-b border-border pb-2">Multi-Agency Fleet</h3>
               <div className="grid grid-cols-2 gap-4">
                 {[
                   { label: 'Available', val: availableAmb.length, color: 'text-operational' },
@@ -154,15 +169,14 @@ const CommandDashboard = () => {
                 )}
               </div>
             </div>
-            
           </div>
 
           {/* Center Column: Map */}
-          <div className="lg:col-span-6 bg-bg-surface border border-border rounded-lg shadow-sm flex flex-col relative overflow-hidden min-h-[400px]">
+          <div className="lg:col-span-6 bg-bg-surface border border-border rounded-lg shadow-sm flex flex-col relative overflow-hidden min-h-[420px]">
             <div className="absolute top-4 left-4 z-[400] bg-white/90 backdrop-blur px-3 py-1.5 rounded shadow border border-border/50 pointer-events-none">
               <span className="text-[10px] font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-operational animate-pulse" />
-                Live Map
+                Live Operational Map
               </span>
             </div>
             <div className="flex-1 w-full h-full relative z-0">
@@ -174,7 +188,7 @@ const CommandDashboard = () => {
           <div className="lg:col-span-3 flex flex-col bg-bg-surface border border-border rounded-lg shadow-sm overflow-hidden h-[500px] lg:h-auto">
             <div className="p-4 border-b border-border bg-bg-surface flex justify-between items-center shrink-0">
               <h3 className="text-[12px] font-bold text-text-main uppercase tracking-widest flex items-center gap-2">
-                Action Queue
+                Emergency Queue
               </h3>
               <span className="text-[10px] font-bold bg-warning/10 text-warning px-2 py-0.5 rounded-full">{activeIncidents.length}</span>
             </div>
@@ -187,10 +201,8 @@ const CommandDashboard = () => {
                   </motion.div>
                 ) : (
                   activeIncidents.slice(0, 20).map((incident) => {
-                    const timeStr = incident.timestamp || incident.createdAt;
-                    const minsAgo = timeStr ? Math.floor((Date.now() - new Date(timeStr).getTime()) / 60000) : 0;
-                    const isCritical = incident.severity >= 9;
-                    const isHigh = incident.severity >= 7;
+                    const isCritical = incident.severity >= 8;
+                    const isHigh = incident.severity >= 6;
 
                     return (
                       <motion.div
@@ -200,32 +212,38 @@ const CommandDashboard = () => {
                         exit={{ opacity: 0, scale: 0.95 }}
                         key={incident._id}
                         onClick={() => setSelectedIncident(incident)}
-                        className={`group relative p-3 bg-bg-surface border rounded cursor-pointer transition-shadow shadow-sm hover:shadow-md ${
-                          isCritical ? 'border-emergency/30 border-l-2 border-l-emergency' : 
-                          isHigh ? 'border-warning/30 border-l-2 border-l-warning' : 
-                          'border-border border-l-2 border-l-info'
+                        className={`group relative p-3 bg-bg-surface border rounded-lg cursor-pointer transition-shadow shadow-sm hover:shadow-md ${
+                          isCritical ? 'border-emergency/40 border-l-4 border-l-emergency' : 
+                          isHigh ? 'border-warning/40 border-l-4 border-l-warning' : 
+                          'border-border border-l-4 border-l-info'
                         }`}
                       >
-                        <div className="flex justify-between items-start mb-2">
+                        <div className="flex justify-between items-start mb-1.5">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                            isCritical ? 'bg-emergency/10 text-emergency' : 
-                            isHigh ? 'bg-warning/10 text-warning' : 
-                            'bg-info/10 text-info'
+                            isCritical ? 'bg-emergency/15 text-emergency' : 
+                            isHigh ? 'bg-warning/15 text-warning' : 
+                            'bg-info/15 text-info'
                           }`}>
-                            {isCritical ? 'CRITICAL' : isHigh ? 'HIGH' : 'MODERATE'}
+                            {incident.category}
                           </span>
-                          <span className="text-[10px] text-text-muted font-medium">{minsAgo}m ago</span>
+                          <span className="text-[10px] text-text-muted font-mono font-bold">Severity {incident.severity}/10</span>
                         </div>
                         
-                        <h4 className="text-[13px] font-semibold text-text-main mb-1 truncate pr-4">
-                          {incident.category.replace(/_/g, ' ')}
+                        <h4 className="text-[12px] font-bold text-text-main mb-1 line-clamp-1 pr-4">
+                          {incident.description || incident.category}
                         </h4>
+
+                        {incident.allocationExplanation && (
+                          <p className="text-[10px] text-text-secondary italic line-clamp-1 bg-bg-surface-secondary/50 p-1 rounded mt-1">
+                            💡 {incident.allocationExplanation}
+                          </p>
+                        )}
                         
                         <div className="flex justify-between items-end mt-2">
-                          <div className="flex flex-col gap-1 text-[11px] text-text-secondary">
-                            <span className="flex items-center gap-1.5 truncate max-w-[140px]"><MapPin size={12}/> {incident.city}</span>
+                          <div className="flex flex-col gap-0.5 text-[10px] text-text-secondary">
+                            <span className="flex items-center gap-1 truncate max-w-[140px]"><MapPin size={11}/> {incident.city}</span>
                           </div>
-                          <ChevronRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 transform duration-200" />
+                          <ChevronRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity transform duration-200" />
                         </div>
                       </motion.div>
                     );
@@ -234,7 +252,6 @@ const CommandDashboard = () => {
               </AnimatePresence>
             </div>
           </div>
-
         </div>
       </div>
       <IncidentDetailsPanel incident={selectedIncident} onClose={() => setSelectedIncident(null)} />

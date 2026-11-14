@@ -45,14 +45,14 @@ app.use(express.urlencoded({ extended: true }));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 300 // allow higher threshold for rich dashboard interactions
 });
 app.use('/api/', limiter);
 
 // Serve uploads folder statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Routes placeholder
+// Routes
 const authRoutes = require('./src/routes/authRoutes');
 const incidentRoutes = require('./src/routes/incidentRoutes');
 const ambulanceRoutes = require('./src/routes/ambulanceRoutes');
@@ -61,6 +61,7 @@ const routeRoutes = require('./src/routes/routeRoutes');
 const hospitalRoutes = require('./src/routes/hospitalRoutes');
 const analyticsRoutes = require('./src/routes/analyticsRoutes');
 const iotRoutes = require('./src/routes/iotRoutes');
+const simulationRoutes = require('./src/routes/simulationRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/incidents', incidentRoutes);
@@ -70,6 +71,7 @@ app.use('/api/routes', routeRoutes);
 app.use('/api/hospitals', hospitalRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/iot', iotRoutes);
+app.use('/api/simulation', simulationRoutes);
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({ success: true, message: 'API is running' });
@@ -111,11 +113,14 @@ io.on('connection', (socket) => {
   });
 });
 
+const { seedHyderabadDataIfEmpty } = require('./src/seed/autoSeed');
+
 const PORT = process.env.PORT || 5000;
 
-// Connect to database BEFORE starting the server
+// Connect to database BEFORE starting the server and auto-seed if empty
 (async () => {
   await connectDB();
+  await seedHyderabadDataIfEmpty();
   server.listen(PORT, () => {
     console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   });

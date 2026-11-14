@@ -1,69 +1,88 @@
 import os
-import google.generativeai as genai
+import json
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+from app.services.ml_classifier import predict_incident_severity
 
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-if API_KEY and API_KEY != "placeholder_key_change_me_later":
-    genai.configure(api_key=API_KEY)
-    
-# Initialize the model (using gemini-pro for text and gemini-pro-vision if images were supported directly, but standard gemini-1.5-pro supports both)
-try:
-    model = genai.GenerativeModel('gemini-1.5-pro-latest')
-except:
-    model = None
 
-async def analyze_incident(description: str, category: str, image_path: str = None) -> dict:
+async def analyze_incident(
+    description: str,
+    category: str,
+    image_path: Optional[str] = None,
+    affected_people: int = 1
+) -> Dict[str, Any]:
     """
-    Analyzes an incident and returns structured JSON with severity, category, and medical flags.
+    Analyzes an emergency report using Gemini LLM if key is present,
+    or our Scikit-Learn ML classifier fallback.
     """
-    if not model or not API_KEY or API_KEY == "placeholder_key_change_me_later":
-        # Fallback to simulated response for development when key is missing
-        return simulate_analysis(description, category)
+    # 1. First run deterministic ML model for ground-truth bounds
+    ml_prediction = predict_incident_severity(description, category, affected_people)
 
-    prompt = f"""
-    You are an AI emergency dispatch assistant. Analyze the following incident report:
-    Category: {category}
-    Description: {description}
-    
-    Output your response STRICTLY as a JSON object with the following schema:
-    {{
-        "verified": boolean,
-        "recommendedCategory": string,
-        "recommendedSeverity": integer (0-10),
-        "confidenceScore": float (0.0-1.0),
-        "medicalEmergency": boolean,
-        "possibleCasualties": integer,
-        "reasoning": string
-    }}
-    """
-    
+    if not API_KEY or API_KEY == "placeholder_key_change_me_later":
+        return {
+            "verified": True,
+            "recommendedCategory": category,
+            "recommendedSeverity": ml_prediction["severity"],
+            "severityLevel": ml_prediction["severityLevel"],
+            "confidenceScore": ml_prediction["confidenceScore"],
+            "medicalEmergency": ml_prediction["isMedicalEmergency"],
+            "possibleCasualties": affected_people,
+            "requiredResources": ml_prediction["requiredResources"],
+            "reasoning": f"ML Model ({ml_prediction['modelName']}): Acuity calculated from indicators [{', '.join(ml_prediction['matchedCues']) if ml_prediction['matchedCues'] else 'standard category cues'}]. Recommended severity {ml_prediction['severity']}/10.",
+            "isGemini": False
+        }
+
+    # 2. If Gemini API Key is available, invoke Gemini
     try:
-        response = model.generate_content(prompt)
-        import json
-        # Strip markdown json blocks if present
-        text = response.text.replace('```json', '').replace('```', '').strip()
-        return json.loads(text)
-    except Exception as e:
-        print(f"Gemini API Error: {e}")
-        return simulate_analysis(description, category)
+        import google.generativeai as genai
+        genai.configure(api_key=API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
-def simulate_analysis(description: str, category: str) -> dict:
-    """Mock analysis for development without API keys"""
-    desc_lower = description.lower() if description else ""
-    
-    is_medical = "heart" in desc_lower or "bleed" in desc_lower or category == "MEDICAL_EMERGENCY"
-    severity = 5
-    if "fire" in desc_lower or "crash" in desc_lower: severity = 8
-    if "unconscious" in desc_lower or "not breathing" in desc_lower: severity = 10
-    
-    return {
-        "verified": True,
-        "recommendedCategory": category,
-        "recommendedSeverity": severity,
-        "confidenceScore": 0.85,
-        "medicalEmergency": is_medical,
-        "possibleCasualties": 1 if is_medical else 0,
-        "reasoning": "Simulated AI analysis based on keywords due to missing API key."
-    }
+        prompt = f"""
+        Act as an Expert Emergency Dispatch AI. Analyze this 911/108 emergency report:
+        Reported Category: {category}
+        Casualties / Affected People: {affected_people}
+        Citizen Description: {description}
+
+        Output STRICTLY as a valid JSON object:
+        {{
+            "verified": true,
+            "recommendedCategory": "{category}",
+            "recommendedSeverity": integer (1-10),
+            "severityLevel": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+            "confidenceScore": float (0.80-0.99),
+            "medicalEmergency": boolean,
+            "possibleCasualties": {affected_people},
+            "requiredResources": {{
+                "ambulances": integer,
+                "ambulanceType": "BASIC_LIFE_SUPPORT" | "ADVANCED_LIFE_SUPPORT" | "ICU_AMBULANCE",
+                "fireEngines": integer,
+                "rescueTeams": integer,
+                "rescueBoats": integer
+            }},
+            "reasoning": string
+        }}
+        """
+
+        response = model.generate_content(prompt)
+        raw_text = response.text.replace('```json', '').replace('```', '').strip()
+        parsed = json.loads(raw_text)
+        parsed["isGemini"] = True
+        return parsed
+    except Exception as e:
+        print(f"Gemini API Exception, falling back to ML model: {e}")
+        return {
+            "verified": True,
+            "recommendedCategory": category,
+            "recommendedSeverity": ml_prediction["severity"],
+            "severityLevel": ml_prediction["severityLevel"],
+            "confidenceScore": ml_prediction["confidenceScore"],
+            "medicalEmergency": ml_prediction["isMedicalEmergency"],
+            "possibleCasualties": affected_people,
+            "requiredResources": ml_prediction["requiredResources"],
+            "reasoning": f"Fallback ML Model: Acuity calculated from cues [{', '.join(ml_prediction['matchedCues'])}]. Severity {ml_prediction['severity']}/10.",
+            "isGemini": False
+        }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutDashboard, AlertTriangle, Truck, Hospital, Activity, Settings, LogOut, Navigation, FileText, Database, Radio, Server, ArrowLeft, Bell, Menu, X, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, Truck, Hospital, Activity, Settings, LogOut, Navigation, FileText, Database, Radio, Server, ArrowLeft, Bell, Menu, X, ShieldAlert, Sparkles } from 'lucide-react';
 import useAuthStore from '../stores/authStore';
 import useDemoStore from '../demo/demoStore';
 import { isSystemDemoMode } from '../services/apiService';
@@ -22,6 +22,7 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
 
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
+    { icon: Sparkles, label: 'PS10 Simulator', path: '/dashboard/ps10', badge: 'PS10' },
     { icon: AlertTriangle, label: 'Live Incidents', path: '/dashboard/incidents' },
     { icon: Truck, label: 'Ambulances', path: '/dashboard/ambulances' },
     { icon: Hospital, label: 'Hospitals', path: '/dashboard/hospitals' },
@@ -77,7 +78,7 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
               key={item.path}
               to={item.path}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="relative flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors group text-[13px] font-medium"
+              className="relative flex items-center justify-between px-3 py-2.5 rounded-md transition-colors group text-[13px] font-medium"
             >
               {isActive && (
                 <motion.div
@@ -87,10 +88,17 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
-              <item.icon size={16} className={`relative z-10 transition-colors ${isActive ? 'text-brand-primary' : 'text-text-muted group-hover:text-text-main'}`} />
-              <span className={`relative z-10 transition-colors ${isActive ? 'text-brand-primary font-semibold' : 'text-text-secondary group-hover:text-text-main'}`}>
-                {item.label}
-              </span>
+              <div className="flex items-center gap-3">
+                <item.icon size={16} className={`relative z-10 transition-colors ${isActive ? 'text-brand-primary' : 'text-text-muted group-hover:text-text-main'}`} />
+                <span className={`relative z-10 transition-colors ${isActive ? 'text-brand-primary font-semibold' : 'text-text-secondary group-hover:text-text-main'}`}>
+                  {item.label}
+                </span>
+              </div>
+              {item.badge && (
+                <span className="relative z-10 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-info/20 text-info border border-info/30">
+                  {item.badge}
+                </span>
+              )}
             </Link>
           );
         })}
@@ -134,7 +142,6 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
 
   return (
     <div className="flex h-screen bg-bg-page text-text-main overflow-hidden font-sans selection:bg-brand-primary/10 selection:text-brand-primary">
-      
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex w-64 bg-bg-surface border-r border-border flex-col z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <SidebarContent />
@@ -165,7 +172,6 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden relative w-full max-w-full bg-bg-page">
-        {/* Very subtle background overlay */}
         <div className="absolute inset-0 z-0 opacity-[0.015] pointer-events-none mix-blend-multiply" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, var(--color-border) 1px, transparent 0)', backgroundSize: '24px 24px' }}></div>
 
         {/* Top Header */}
@@ -214,7 +220,6 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
               <AnimatePresence>
                 {showNotifications && (
                   <>
-                    {/* Click-outside overlay to close */}
                     <div 
                       className="fixed inset-0 z-[9998]" 
                       onClick={() => setShowNotifications(false)} 
@@ -278,7 +283,6 @@ const DashboardLayout = ({ children, role = 'DISPATCHER' }) => {
                                 </div>
                                 <p className={`text-xs ${!notif.read ? 'text-text-main font-medium' : 'text-text-secondary'}`}>{notif.message}</p>
                               </div>
-                              {/* Per-notification close button */}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();

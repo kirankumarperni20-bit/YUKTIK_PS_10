@@ -1,8 +1,13 @@
 const Dispatch = require('../models/Dispatch');
 const Ambulance = require('../models/Ambulance');
 const Incident = require('../models/Incident');
+const Hospital = require('../models/Hospital');
+const RoadCondition = require('../models/RoadCondition');
+const AllocationLog = require('../models/AllocationLog');
+const { runGlobalOptimization, matchOptimalHospital } = require('../services/optimizationEngine');
+const reallocationEngine = require('../services/reallocationEngine');
 
-// @desc    Recommend ambulance for an incident
+// @desc    Recommend optimal resource and hospital for an incident using Global Optimization
 // @route   POST /api/dispatch/recommend
 // @access  Private (Dispatcher, Admin)
 const recommendDispatch = async (req, res, next) => {
@@ -14,58 +19,53 @@ const recommendDispatch = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Incident not found' });
     }
 
-    // Find available ambulances
-    const availableAmbulances = await Ambulance.find({ status: 'AVAILABLE' });
+    const [ambulances, hospitals, roadConditions] = await Promise.all([
+      Ambulance.find({ status: 'AVAILABLE' }),
+      Hospital.find({ status: { $ne: 'OFFLINE' } }),
+      RoadCondition.find({ state: { $ne: 'NORMAL' } })
+    ]);
     
-    if (availableAmbulances.length === 0) {
-      return res.json({ success: true, data: null, message: 'No ambulances available' });
+    if (ambulances.length === 0) {
+      return res.json({ 
+        success: true, 
+        data: null, 
+        message: 'No emergency response units currently available in fleet' 
+      });
     }
 
-    // Simple Dispatch Scoring Logic (Haversine distance for simplicity here, OSRM can be added)
-    // In a real system, this calls OSRM to get real ETA
-    let bestAmbulance = null;
-    let bestScore = -1;
-    let scoreFactors = {};
-
-    const toRad = (value) => (value * Math.PI) / 180;
-    
-    availableAmbulances.forEach(ambulance => {
-      // 1. Calculate straight-line distance
-      const [lon1, lat1] = ambulance.currentLocation.coordinates;
-      const [lon2, lat2] = incident.location.coordinates;
-      
-      const R = 6371; // km
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      const distance = R * c; // in km
-
-      // 2. Capability matching
-      let capabilityScore = 1.0;
-      if (incident.isMedicalEmergency && ambulance.type === 'ADVANCED_LIFE_SUPPORT') {
-        capabilityScore = 1.5;
-      }
-
-      // 3. Final score (higher is better, so inverse of distance)
-      const distanceScore = 100 / (distance + 1); // Avoid division by zero
-      const totalScore = distanceScore * capabilityScore;
-
-      if (totalScore > bestScore) {
-        bestScore = totalScore;
-        bestAmbulance = ambulance;
-        scoreFactors = { distance, capabilityScore, distanceScore };
-      }
+    // Run global optimization on this incident and candidate resources
+    const optResult = await runGlobalOptimization({
+      incidents: [incident],
+      resources: ambulances,
+      hospitals,
+      roadConditions
     });
+
+    const match = optResult.assignments[0];
+
+    if (!match) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'No vehicle met the capability hard constraints for this incident'
+      });
+    }
 
     res.json({
       success: true,
       data: {
-        ambulance: bestAmbulance,
-        score: bestScore,
-        factors: scoreFactors
+        ambulance: match.resource,
+        hospital: match.hospital,
+        etaMinutes: match.etaMin,
+        distanceKm: match.distanceKm,
+        score: match.score,
+        explanation: match.explanation,
+        factors: {
+          distanceKm: match.distanceKm,
+          etaMinutes: match.etaMin,
+          severity: incident.severity,
+          hospitalMatch: match.hospitalMatch
+        }
       }
     });
   } catch (error) {
@@ -73,39 +73,132 @@ const recommendDispatch = async (req, res, next) => {
   }
 };
 
-// @desc    Assign ambulance to incident
+// @desc    Run Simultaneous Multi-Incident Global Optimization
+// @route   POST /api/dispatch/global-optimize
+// @access  Private (Dispatcher, Admin)
+const globalOptimize = async (req, res, next) => {
+  try {
+    const [incidents, ambulances, hospitals, roadConditions] = await Promise.all([
+      Incident.find({ status: { $nin: ['RESOLVED', 'CANCELLED'] } }),
+      Ambulance.find(),
+      Hospital.find(),
+      RoadCondition.find({ state: { $ne: 'NORMAL' } })
+    ]);
+
+    const result = await runGlobalOptimization({
+      incidents,
+      resources: ambulances,
+      hospitals,
+      roadConditions
+    });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Trigger Real-Time Dynamic Reallocation Event
+// @route   POST /api/dispatch/reallocate
+// @access  Private (Dispatcher, Admin)
+const triggerReallocation = async (req, res, next) => {
+  try {
+    const { eventType, ambulanceId, hospitalId, incidentId, roadCondition, weatherFactor, details } = req.body;
+
+    if (req.io) reallocationEngine.setIo(req.io);
+
+    const result = await reallocationEngine.handleEvent({
+      eventType: eventType || 'GLOBAL_REOPTIMIZATION',
+      ambulanceId,
+      hospitalId,
+      incidentId,
+      roadCondition,
+      weatherFactor: weatherFactor || 1.0,
+      details: details || 'Manual trigger from command dashboard'
+    });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Assign resource to incident (with audit log & socket broadcast)
 // @route   POST /api/dispatch/assign
 // @access  Private (Dispatcher, Admin)
 const assignDispatch = async (req, res, next) => {
   try {
-    const { incidentId, ambulanceId } = req.body;
+    const { incidentId, ambulanceId, hospitalId, notes } = req.body;
+
+    const [incident, ambulance, hospital] = await Promise.all([
+      Incident.findById(incidentId),
+      Ambulance.findById(ambulanceId),
+      hospitalId ? Hospital.findById(hospitalId) : null
+    ]);
+
+    if (!incident || !ambulance) {
+      return res.status(404).json({ success: false, message: 'Incident or Ambulance not found' });
+    }
 
     const dispatch = await Dispatch.create({
       incident: incidentId,
       ambulance: ambulanceId,
-      dispatcher: req.user._id,
+      hospital: hospitalId || undefined,
+      dispatcher: req.user ? req.user._id : undefined,
       status: 'ASSIGNED',
+      strategy: 'MANUAL_OVERRIDE',
+      allocationReason: notes || `Direct manual dispatch approved by dispatcher.`,
       assignedAt: Date.now()
     });
 
     // Update Incident
     await Incident.findByIdAndUpdate(incidentId, { 
       assignedAmbulance: ambulanceId,
-      assignedDispatcher: req.user._id,
+      assignedHospital: hospitalId || undefined,
+      recommendedHospital: hospitalId || undefined,
+      assignedDispatcher: req.user ? req.user._id : undefined,
       status: 'ASSIGNED',
-      dispatchTime: Date.now()
+      dispatchTime: Date.now(),
+      allocationExplanation: notes || 'Assigned to ' + ambulance.ambulanceId
     });
 
     // Update Ambulance
-    const ambulance = await Ambulance.findByIdAndUpdate(ambulanceId, {
-      status: 'ASSIGNED',
-      currentIncident: incidentId
-    }, { new: true });
+    await Ambulance.findByIdAndUpdate(ambulanceId, {
+      status: 'EN_ROUTE',
+      currentIncident: incidentId,
+      lastUpdated: Date.now()
+    });
 
-    // Notify connected clients
-    req.io.emit('dispatch:created', dispatch);
-    req.io.emit('ambulance:status', ambulance);
-    req.io.emit('incident:status', await Incident.findById(incidentId));
+    // Audit Log
+    await AllocationLog.create({
+      triggerEvent: 'INITIAL_DISPATCH',
+      incidentId: incident._id,
+      incidentCode: incident.incidentId || incident._id.toString(),
+      newAllocation: {
+        resourceId: ambulance._id,
+        resourceName: ambulance.ambulanceId,
+        hospitalId: hospital?._id,
+        hospitalName: hospital?.name
+      },
+      justification: notes || 'Dispatcher assigned unit ' + ambulance.ambulanceId,
+      strategyUsed: 'MANUAL_OVERRIDE'
+    });
+
+    // Notify connected clients via Socket.IO
+    if (req.io) {
+      req.io.emit('dispatch:assigned', {
+        dispatch,
+        incident,
+        ambulance,
+        hospital
+      });
+    }
 
     res.status(201).json({ success: true, data: dispatch });
   } catch (error) {
@@ -113,16 +206,33 @@ const assignDispatch = async (req, res, next) => {
   }
 };
 
-// @desc    Get active dispatches
+// @desc    Get allocation audit history
+// @route   GET /api/dispatch/history
+// @access  Private (Dispatcher, Admin)
+const getDispatchHistory = async (req, res, next) => {
+  try {
+    const logs = await AllocationLog.find()
+      .populate('incidentId', 'incidentId category severity location address')
+      .sort('-timestamp')
+      .limit(100);
+
+    res.json({ success: true, count: logs.length, data: logs });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get all active dispatches
 // @route   GET /api/dispatch/active
 // @access  Private
 const getActiveDispatches = async (req, res, next) => {
   try {
-    const dispatches = await Dispatch.find({ status: { $in: ['RECOMMENDED', 'ASSIGNED'] } })
+    const dispatches = await Dispatch.find({ status: { $nin: ['COMPLETED', 'CANCELLED'] } })
+      .populate('incident')
       .populate('ambulance')
-      .populate('incident');
-      
-    res.json({ success: true, data: dispatches });
+      .populate('hospital');
+
+    res.json({ success: true, count: dispatches.length, data: dispatches });
   } catch (error) {
     next(error);
   }
@@ -130,6 +240,9 @@ const getActiveDispatches = async (req, res, next) => {
 
 module.exports = {
   recommendDispatch,
+  globalOptimize,
+  triggerReallocation,
   assignDispatch,
+  getDispatchHistory,
   getActiveDispatches
 };

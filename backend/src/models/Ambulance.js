@@ -7,13 +7,32 @@ const ambulanceSchema = new mongoose.Schema({
   state: { type: String },
   type: { 
     type: String, 
-    enum: ['BASIC_LIFE_SUPPORT', 'ADVANCED_LIFE_SUPPORT', 'PATIENT_TRANSPORT', 'OTHER'],
+    enum: [
+      'BASIC_LIFE_SUPPORT', 
+      'ADVANCED_LIFE_SUPPORT', 
+      'ICU_AMBULANCE', 
+      'FIRE_ENGINE', 
+      'RESCUE_VEHICLE', 
+      'RESCUE_BOAT', 
+      'RESCUE_TEAM', 
+      'MEDICAL_TEAM', 
+      'PATIENT_TRANSPORT', 
+      'OTHER'
+    ],
     default: 'BASIC_LIFE_SUPPORT'
+  },
+  resourceCategory: {
+    type: String,
+    enum: ['AMBULANCE', 'FIRE_ENGINE', 'RESCUE_BOAT', 'RESCUE_TEAM', 'MEDICAL_TEAM'],
+    default: 'AMBULANCE'
   },
   capability: { type: String },
   capabilities: [{ type: String }],
   driverName: { type: String },
   driverPhone: { type: String },
+  area: { type: String },
+  equipment: [{ type: String }],
+  fuelLevel: { type: Number, default: 100 },
   driver: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   speed: { type: Number, default: 0 },
   heading: { type: Number, default: 0 },
@@ -40,5 +59,7 @@ const ambulanceSchema = new mongoose.Schema({
 
 ambulanceSchema.index({ currentLocation: '2dsphere' });
 ambulanceSchema.index({ status: 1 });
+ambulanceSchema.index({ type: 1 });
+ambulanceSchema.index({ resourceCategory: 1 });
 
 module.exports = mongoose.model('Ambulance', ambulanceSchema);
