@@ -5,7 +5,7 @@ const Incident = require('../models/Incident');
 // Load environment variables
 dotenv.config();
 
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb+srv://tarushivishwakarma22_db_user:TarushiVishwakarma@cluster0.biw7npk.mongodb.net/';
+const MONGO_URI = process.env.MONGODB_URI || 'Your MongoDB locaal host link';
 
 const seedHistorical = async () => {
   try {
